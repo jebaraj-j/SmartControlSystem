@@ -1,0 +1,18 @@
+# Core vision & ML
+opencv-python==4.8.1.78
+mediapipe==0.10.32
+numpy==1.23.5
+tensorflow==2.12.0
+scikit-learn==1.3.2
+matplotlib==3.8.4
+
+# GUI & system control
+PyQt5==5.15.10
+pyautogui==0.9.54
+pygetwindow==0.0.9
+screeninfo==0.8.1
+psutil==5.9.6
+
+# Audio & voice (offline)
+sounddevice>=0.5,<0.6
+vosk==0.3.45
