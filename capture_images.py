@@ -1,18 +1,13 @@
 """
-capture_images.py — Manual one-press-at-a-time image collector.
-Uses MediaPipe Tasks API (compatible with mediapipe 0.10.32)
-
-Controls (camera window):
-SPACE  → save image
-Q      → next gesture
-ESC    → quit
+capture_images.py — Multi-hand image collector
 """
 
 import cv2
 import mediapipe as mp
 import os
+import numpy as np
 import sys
-
+import time
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
@@ -23,106 +18,69 @@ DATASET_ROOT = "dataset"
 IMAGE_SIZE = (224, 224)
 
 
-# ─────────────────────────────────────────────
-# Crop hand using landmarks (Tasks API)
-# ─────────────────────────────────────────────
 def crop_hand(frame, landmarks):
     h, w, _ = frame.shape
-
     xs = [lm.x * w for lm in landmarks]
     ys = [lm.y * h for lm in landmarks]
 
     x0, x1 = int(min(xs)), int(max(xs))
     y0, y1 = int(min(ys)), int(max(ys))
 
-    px, py = int((x1 - x0) * 0.2), int((y1 - y0) * 0.2)
-    x0 = max(0, x0 - px)
-    y0 = max(0, y0 - py)
-    x1 = min(w, x1 + px)
-    y1 = min(h, y1 + py)
+    pad_x = int((x1 - x0) * 0.2)
+    pad_y = int((y1 - y0) * 0.2)
 
-    region = frame[y0:y1, x0:x1]
-    return cv2.resize(region, IMAGE_SIZE) if region.size else None
+    x0 = max(0, x0 - pad_x)
+    y0 = max(0, y0 - pad_y)
+    x1 = min(w, x1 + pad_x)
+    y1 = min(h, y1 + pad_y)
+
+    roi = frame[y0:y1, x0:x1]
+    return cv2.resize(roi, IMAGE_SIZE) if roi.size else None
 
 
-# ─────────────────────────────────────────────
-# Manual Collector
-# ─────────────────────────────────────────────
 class ManualCollector:
+
     def __init__(self):
-        # Camera (Windows-safe)
-        self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+
+        # ✅ CAMERA FIX
+        self.cap = cv2.VideoCapture(0)
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
         if not self.cap.isOpened():
-            print("❌ Camera could not be opened")
+            print("❌ Camera error")
             sys.exit(1)
 
-        # MediaPipe Tasks Hand Landmarker
+        assert os.path.exists("hand_landmarker.task"), "❌ model missing"
+
         BaseOptions = python.BaseOptions
-        HandLandmarker = vision.HandLandmarker
         HandLandmarkerOptions = vision.HandLandmarkerOptions
         RunningMode = vision.RunningMode
 
         options = HandLandmarkerOptions(
             base_options=BaseOptions(model_asset_path="hand_landmarker.task"),
             running_mode=RunningMode.VIDEO,
-            num_hands=1,
-            min_hand_detection_confidence=0.5,
-            min_tracking_confidence=0.5
+            num_hands=2,
+            min_hand_detection_confidence=0.6,
+            min_tracking_confidence=0.6
         )
 
-        self.landmarker = HandLandmarker.create_from_options(options)
+        self.landmarker = vision.HandLandmarker.create_from_options(options)
 
-    # ─────────────────────────────────────────
-    @staticmethod
-    def _dir(name):
+    def _dir(self, name):
         path = os.path.join(DATASET_ROOT, name)
         os.makedirs(path, exist_ok=True)
         return path
 
-    def _count(self, name):
-        return len([f for f in os.listdir(self._dir(name)) if f.endswith(".jpg")])
-
-    def _next_idx(self, name):
+    def _next_index(self, name):
         files = [f for f in os.listdir(self._dir(name)) if f.endswith(".jpg")]
-        if not files:
-            return 0
-        nums = [int(f.split("_")[-1].replace(".jpg", "")) for f in files]
-        return max(nums) + 1 if nums else 0
+        return len(files)
 
-    # ─────────────────────────────────────────
-    def _draw_ui(self, frame, name, total, hand_ok, flash):
-        h, w, _ = frame.shape
-
-        cv2.rectangle(frame, (0, 0), (w, 70), (30, 30, 30), -1)
-        cv2.putText(frame, f"Gesture: {name}", (10, 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-        cv2.putText(frame, f"Saved: {total}", (10, 55),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-
-        status = "HAND OK" if hand_ok else "NO HAND"
-        color = (0, 255, 0) if hand_ok else (0, 0, 255)
-        cv2.putText(frame, status, (w - 140, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-
-        if flash:
-            cv2.rectangle(frame, (5, 5), (w - 5, h - 5), (0, 0, 255), 5)
-
-        cv2.rectangle(frame, (0, h - 50), (w, h), (40, 40, 40), -1)
-        cv2.putText(frame, GESTURE_INSTRUCTIONS[name], (10, h - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
-
-    # ─────────────────────────────────────────
     def _collect(self, name):
-        existing = self._count(name)
-        idx = self._next_idx(name)
-        added = 0
-        flash = 0
-
-        print(f"\n── {name} ── ({existing} images)")
-        print(GESTURE_INSTRUCTIONS[name])
+        idx = self._next_index(name)
+        print(f"\nCollecting: {name}")
+        print(GESTURE_INSTRUCTIONS.get(name, ""))
 
         while True:
             ret, frame = self.cap.read()
@@ -132,72 +90,55 @@ class ManualCollector:
             frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            mp_image = mp.Image(
+            mp_img = mp.Image(
                 image_format=mp.ImageFormat.SRGB,
                 data=rgb
             )
 
-            timestamp_ms = int(cv2.getTickCount() / cv2.getTickFrequency() * 1000)
-            result = self.landmarker.detect_for_video(mp_image, timestamp_ms)
+            timestamp = int(time.time() * 1000)
+            result = self.landmarker.detect_for_video(mp_img, timestamp)
 
-            hand_ok = bool(result.hand_landmarks)
-            landmarks = result.hand_landmarks[0] if hand_ok else None
+            hand_count = len(result.hand_landmarks) if result.hand_landmarks else 0
 
-            if hand_ok:
-                for lm in landmarks:
-                    x, y = int(lm.x * frame.shape[1]), int(lm.y * frame.shape[0])
-                    cv2.circle(frame, (x, y), 4, (0, 255, 0), -1)
+            cv2.putText(frame, f"Hands: {hand_count}",
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7, (0, 255, 0), 2)
 
-            flash = max(0, flash - 1)
-            self._draw_ui(frame, name, existing + added, hand_ok, flash > 0)
             cv2.imshow("Capture", frame)
-
             key = cv2.waitKey(1) & 0xFF
 
             if key == ord(" "):
-                if name != "No_Hand" and not hand_ok:
-                    print("⚠ Show hand first")
+                if name == "Both_Shutdown" and hand_count != 2:
+                    print("⚠ Show TWO hands")
+                    continue
+                if hand_count == 0:
                     continue
 
-                img = crop_hand(frame, landmarks) if name != "No_Hand" else cv2.resize(frame, IMAGE_SIZE)
-                if img is None:
+                crop = crop_hand(frame, result.hand_landmarks[0])
+                if crop is None:
                     continue
 
                 path = os.path.join(self._dir(name), f"{name}_{idx:04d}.jpg")
-                cv2.imwrite(path, img)
+                cv2.imwrite(path, crop)
                 idx += 1
-                added += 1
-                flash = 6
-                print(f"✓ Saved {path}")
+                print("✓ Saved", path)
 
             elif key == ord("q"):
-                return added
+                return
 
-            elif key == 27:
-                return -1
-
-    # ─────────────────────────────────────────
     def run(self):
-        print("\nMANUAL GESTURE IMAGE COLLECTOR\n")
-
         for i, g in enumerate(GESTURE_CLASSES):
-            print(f"{i + 1}. {g}")
+            print(f"{i+1}. {g}")
 
         while True:
-            ch = input("\nChoice (1-11 / A / Q): ").strip().lower()
+            ch = input("Select gesture (Q quit): ").lower()
             if ch == "q":
                 break
-            elif ch == "a":
-                for g in GESTURE_CLASSES:
-                    if self._collect(g) == -1:
-                        break
-            elif ch.isdigit() and 1 <= int(ch) <= len(GESTURE_CLASSES):
-                if self._collect(GESTURE_CLASSES[int(ch) - 1]) == -1:
-                    break
+            if ch.isdigit():
+                self._collect(GESTURE_CLASSES[int(ch)-1])
 
         self.cap.release()
         cv2.destroyAllWindows()
-        print("\nDone.")
 
 
 if __name__ == "__main__":
