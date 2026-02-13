@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Installer logs
+pip-log.txt
+
+# Unit test / coverage
+.pytest_cache/
+coverage.xml
+
+# Editor directories and files
+.vscode/
+.idea/
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and databases
+*.log
+*.sqlite3
+
+# Model files and large datasets (use Git LFS where appropriate)
+vosk-model-small-en-us-0.15/
+gesture_dataset/
+
+# Common binary model formats
+*.pt
+*.pth
+*.pb
+*.onnx
+
+# Temporary files
+*.tmp
+*.swp
